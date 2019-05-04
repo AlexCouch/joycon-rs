@@ -5,3 +5,4 @@ authors = ["Alex Couch <alcouch65@gmail.com>"]
 
 [dependencies]
 hidapi = "0.5.2"
+threadgroup = "0.1.0"

@@ -1,16 +1,19 @@
 extern crate joycon_rs;
 
-use joycon_rs::*;
-use joycon_rs::joycon::JoyconManager;
+use joycon_rs::joycon::*;
 
 fn main(){
     let mut manager = match JoyconManager::new(){
         Ok(jm) => jm,
-        Err(e) => return
+        Err(_) => return
     };
     manager.search_for_joycons();
-    for d in manager.connected_joycons {
-        assert_eq!(d.product_string.is_some(), true);
-        println!("{}", d.product_string.unwrap());
+    loop {
+        let mut buf = [0u8; 20];
+        let res = manager.connected_joycons[0].read(&mut buf[..]);
+        match res{
+            Ok(_) => println!("Input report: {:?}", buf),
+            Err(e) => eprintln!("Error: {}", e)
+        }
     }
 }
