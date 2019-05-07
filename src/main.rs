@@ -1,19 +1,18 @@
 extern crate joycon_rs;
 
 use joycon_rs::joycon::*;
+use std::sync::{Arc, Mutex};
+use std::rc::Rc;
 
 fn main(){
     let mut manager = match JoyconManager::new(){
-        Ok(jm) => jm,
-        Err(_) => return
+        Ok(mut jm) => jm,
+        Err(e) => return
     };
-    manager.search_for_joycons();
     loop {
-        let mut buf = [0u8; 20];
-        let res = manager.connected_joycons[0].read(&mut buf[..]);
-        match res{
-            Ok(_) => println!("Input report: {:?}", buf),
-            Err(e) => eprintln!("Error: {}", e)
-        }
+        manager.connected_joycons[0].add_input_report_handler_cb(move |buf|{
+            println!("Input report: {:?}", buf);
+            true
+        });
     }
 }

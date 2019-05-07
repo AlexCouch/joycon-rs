@@ -4,5 +4,5 @@ version = "0.1.0"
 authors = ["Alex Couch <alcouch65@gmail.com>"]
 
 [dependencies]
-hidapi = "0.5.2"
+hidapi = { git = "https://github.com/AlexCouch/hidapi-rs" }
 threadgroup = "0.1.0"
