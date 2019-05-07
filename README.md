@@ -12,5 +12,5 @@ The JoyconManager will continuously and silently scan for Joycons with zero-over
 
 A Joycon object will contain methods for requesting an action (or sending an output report), rumbling the joycon (a type of action request), getting the current battery information, reading memory (a type of action request), setting player led (player 1, player 2, etc), etc. Every Joycon object will also allow enabling shared mode and have a "companion joycon". Shared mode will be handled by the JoyconManager.
 
-# Shared Mode
+### Shared Mode
 Shared mode is a not really a mode in the firmware but really an implementation mode. Shared mode is a simple feature of the Joycon that allows the two devices to act independently of each other, becoming two separate controllers. This is *very* important because then the input mappings, by the interpreting software/game, have to be rotated by 90-degrees (negative for left controller, positive for the right controller). To handle this properly, the [API architecture](ARCHITECTURE.md) will need to carefully implement a user-friendly handle.

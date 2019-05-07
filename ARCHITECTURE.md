@@ -24,7 +24,7 @@ This API specification contains all the information you need to know about all t
     * Plans for using JSON for constructing packets before parsed into an action is considered for the default implementation
     * See rumbling below
 
-###Actions
+### Actions
 * An action is an output report that is wrapped in an object that the API can understand
 * An action report should be readable by the user and the Joycons by being represented in two ways
     * The buffered output report in the form of a u8 array sent to the Joycon devices
@@ -37,7 +37,7 @@ This API specification contains all the information you need to know about all t
         * Request to write memory (such as writing user custom calibrations; see memory manager)
         * Retrieve the current battery voltage and parse into a `BatteryInformation` property
 
-###Action requests
+### Action requests
 * An action request is an output report that is wrapped in an object and passed into a queue to be sent to the joycon
 * An action request is validated by the specified joycon's dedicated output thread
 * See [actions](#actions) for information on actions
