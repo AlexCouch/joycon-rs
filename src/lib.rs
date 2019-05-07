@@ -68,107 +68,126 @@ pub mod joycon{
     use std::rc::{Weak, Rc};
     use core::borrow::{Borrow, BorrowMut};
     use std::thread::JoinHandle;
-    use std::fmt::{Error, Formatter};
+    use std::fmt::{Error, Formatter, Debug};
     use std::os::raw::c_void;
+    use std::sync::mpsc::Receiver;
+    use std::cell::{RefCell, Cell};
 
     const JC_VENDOR_ID: u16 = 1406;
     const LEFT_JC_PROD_ID: u16 = 8198;
     const RIGHT_JC_PROD_ID: u16 = 8199;
+
+    pub type InputReportHandler = Fn(&[u8]) -> () + 'static + Send + Sync;
 
     trait Threaded {
         fn start(&self) -> JoinHandle<()>;
     }
 
     struct InputReportHandlerThread{
-        input_report_handlers: Vec<Box<dyn Fn(&[u8]) -> ()>>,
-        input_device: Arc<HidDevice>
+        input_report_handlers: Vec<Arc<Box<InputReportHandler>>>,
+        // Is there a way for me to just concurrently share a HidDevice reference? Is it even safe for me to open a hid multiple times? (input thread and output thread
+        input_device: Arc<HidDeviceInfo>
     }
 
-    unsafe impl Send for c_void{}
-
-    impl Threaded for InputReportHandlerThread{
-        fn start(&self) -> JoinHandle<()>{
-             return thread::spawn(move||{
-                 let dev = Arc::clone(&self.input_device);
+    //Will find a better way to implement traits for the threading structs. Perhaps find a better way to implement the threading!
+    impl<'a> InputReportHandlerThread{
+        fn start(self, manager: Arc<JoyconManager>) -> JoinHandle<()>{
+             thread::spawn(move||{
+                 let dev = manager.hidapi.open(Arc::clone(&self.input_device).vendor_id, Arc::clone(&self.input_device).product_id).unwrap();
                  loop{
-                     let mut buf: &[u8] = &[];
+                     let mut buf: &mut [u8] = &mut [0u8; 50];
                      dev.read(&mut buf).unwrap();
-                     for handler in self.input_report_handlers{
+                     for handler in &self.input_report_handlers{
                          handler(buf)
                      }
                  }
             })
         }
+
+        fn add_input_handler(&mut self, callback_receiver: Receiver<Box<InputReportHandler>>){
+            self.input_report_handlers.push(Arc::new(callback_receiver.recv().unwrap()))
+        }
     }
 
-    #[derive(Debug)]
     pub struct Joycon {
         handle: Arc<HidDeviceInfo>,
         input_thread_join_handle: InputReportHandlerThread,
         output_thread_join_handle: JoinHandle<Option<bool>>,
     }
 
-    #[derive(Clone)]
     pub struct JoyconProperties{
         input_report_handlers: Vec<fn(buf: &[u8])>,
     }
 
     impl Joycon{
-        pub fn new(mut manager: Rc<JoyconManager>, handle: HidDeviceInfo) -> Option<Joycon>{
-            let mut async_manager = JoyconManager::get_async(Rc::clone(&manager));
+        pub fn new(mut manager: Arc<JoyconManager>, handle: HidDeviceInfo) -> Option<Rc<Joycon>>{
+            let manager_clone = Arc::clone(&manager);
             let mut async_handle = Arc::new(handle);
-            let device = Arc::new(manager.hidapi.open(async_handle.vendor_id, async_handle.product_id).unwrap());
+            let device = Arc::new(Arc::clone(&manager_clone).hidapi.open(async_handle.vendor_id, async_handle.product_id).unwrap());
             let jc = Rc::new(Joycon {
                 handle: Arc::clone(&async_handle),
                 input_thread_join_handle: InputReportHandlerThread{
                     input_report_handlers: vec![],
-                    input_device: Arc::clone(&device)
+                    input_device: Arc::clone(&async_handle)
                 },
                 output_thread_join_handle: thread::spawn::<_,Option<bool>>(move || { Some(true) })
             });
-            jc.input_thread_join_handle.start();
-            return Ok(Rc::try_unwrap(jc).unwrap());
+            let jc_clone = Rc::clone(&jc);
+            let jc_unwrap = Rc::try_unwrap(jc_clone);
+            match jc_unwrap{
+                Ok(j) => {
+                    j.input_thread_join_handle.start(Arc::clone(&manager_clone));
+                    return Some(jc)
+                },
+                Err(rc) => return None
+            }
         }
 
-        pub fn add_input_report_handler_cb(&mut self, callback: fn(buf: &[u8]) -> bool){
-            self.input_thread_join_handle.input_report_handlers.push(Box::new( callback));
+        pub fn add_input_report_handler_cb(&mut self, callback: Box<InputReportHandler>){
+            let (sender, receiver) = std::sync::mpsc::channel::<Box<InputReportHandler>>();
+            sender.send(callback);
+            self.input_thread_join_handle.add_input_handler(receiver);
         }
     }
 
     pub type JoyconResult = Result<Joycon, Error>;
 
-    #[derive(Debug)]
     pub struct JoyconManager{
         hidapi: HidApi,
         pub connected_joycons: Vec<Joycon>
     }
 
     impl JoyconManager{
-        pub fn new() -> std::result::Result<Rc<JoyconManager>, HidError>{
+        pub fn new() -> std::result::Result<Arc<JoyconManager>, HidError>{
             let _hidapi = match HidApi::new(){
                 Ok(h) => h,
                 Err(e) => return Err(e)
             };
 
-            let mut jm = Rc::new(JoyconManager{
+            let manager = JoyconManager{
                 hidapi: _hidapi,
                 connected_joycons: Vec::new()
-            });
-            JoyconManager::search_for_joycons(Rc::clone(&jm));
-            Ok(Rc::clone(&jm))
+            };
+            let mut jm = Arc::new(manager);
+            JoyconManager::search_for_joycons(Arc::clone(&jm));
+            Ok(Arc::clone(&jm))
         }
 
-        pub fn get_async(mut this: Rc<JoyconManager>) -> Arc<JoyconManager>{
-            let jm = Rc::try_unwrap(this)?;
-            Arc::new(jm)
+        pub fn get_async(mut this: Rc<JoyconManager>) -> Arc<Mutex<JoyconManager>>{
+            let jm = Rc::try_unwrap(this);
+            match jm{
+                Ok(man) => return Arc::new(Mutex::new(man)),
+                Err(_) => panic!("Could not convert Rc<JoyconManager> to Arc<JoyconManager>.") // @TODO: ImproveErr
+            }
         }
 
         /// Searches for joycons and pushes them to `connected_joycons`
         /// Can be used for refreshing the list of joycons, however, this is called internally by a refresh thread
         /// And called upon JoyconManager initialization
-        pub fn search_for_joycons(mut this: Rc<JoyconManager>){
-            let devs = this.hidapi.devices();
-            for _d in devs.iter(){
+        pub fn search_for_joycons(this: Arc<JoyconManager>){
+            let mut this_clone = Arc::clone(&this);
+            let devs = this_clone.hidapi.devices();
+            for _d in devs.iter() {
                 let d = _d.clone();
                 let vendor_id = d.vendor_id;
                 let prod_id = d.product_id;
@@ -176,16 +195,27 @@ pub mod joycon{
                 if vendor_id == JC_VENDOR_ID &&
                     (
                         (prod_id == LEFT_JC_PROD_ID) ||
-                        (prod_id == RIGHT_JC_PROD_ID)
-                ) {
+                            (prod_id == RIGHT_JC_PROD_ID)
+                    ) {
                     // TODO: Better error handling
-                    let jc = Joycon::new(Rc::clone(&this), d);
-                    match jc {
-                        Ok(dev) => {
-                            this.connected_joycons.push(dev);
+                    let jc = Joycon::new(Arc::clone(&this), d);
+                    match jc {//TODO: Improve error handling and referencing!!!!
+                        Some(dev) => {
+                            let rc_res = Arc::try_unwrap(Arc::clone(&this));
+                            match rc_res {
+                                Ok(mut m) => {
+                                    match Rc::try_unwrap(dev){
+                                        Ok(d) => {
+                                            m.connected_joycons.push(d);
+                                        },
+                                        Err(_) => panic!("Could not unwrap Joycon!")
+                                    }
+                                },
+                                Err(e) => panic!("Could not get JoyconManager from Rc<RefCell>.")
+                            }
                             true
                         },
-                        Err(_) => {
+                        None => {
                             eprintln!("Error: Could not initialize Joycon."); // @TODO: ERRImprove
                             false
                         }
