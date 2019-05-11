@@ -74,26 +74,26 @@ pub mod joycon{
 
     // ==================== Joycon =================================
 
-    pub struct Joycon<'j> {
+    pub struct Joycon {
         device_handle: Arc<HidDeviceInfo>,
-        input_handler_thread: InputHandlerThread<'j>
+        input_handler_thread: InputHandlerThread
     }
 
     pub type InputCallback = Fn(Vec<u8>) + 'static + Send + Sync;
 
-    pub struct InputHandlerThread<'j>{
+    pub struct InputHandlerThread{
         join_handle: Option<JoinHandle<()>>,
         input_handler_callbacks: Vec<Box<InputCallback>>,
         callback_channel: CallbackChannel
     }
 
-    unsafe impl<'j> Sync for InputHandlerThread<'j>{}
-    unsafe impl<'j> Send for InputHandlerThread<'j>{}
+    unsafe impl Sync for InputHandlerThread{}
+    unsafe impl Send for InputHandlerThread{}
 
     struct DeviceChannel(Sender<Arc<HidDeviceInfo>>, Receiver<Arc<HidDeviceInfo>>);
     struct CallbackChannel(Sender<Vec<Box<InputCallback>>>, Receiver<Vec<Box<InputCallback>>>);
 
-    impl<'j> InputHandlerThread<'j>{
+    impl InputHandlerThread{
         pub fn new(device: Arc<HidDeviceInfo>, manager: Arc<JoyconManager>) -> Self{
             let (dev_sender, dev_receiver) = channel::<Arc<HidDeviceInfo>>();
             let (cb_sender, cb_receiver) = channel::<Vec<Box<Fn(Vec<u8>) + Send + Sync + 'static>>>();
@@ -103,40 +103,40 @@ pub mod joycon{
                 callback_channel: CallbackChannel(cb_sender, cb_receiver)
             };
             let hidapi = Arc::clone(&manager.hidapi);
-            &input_handler_thread.start(device, hidapi);
             return input_handler_thread;
         }
 
-        fn start(&'j mut self, device: Arc<HidDeviceInfo>, hidapi: Arc<HidApi>){
-            let (self_sender, self_receiver) = channel::<Arc<&'j mut Self>>();
-            let self_arc = Arc::new(self);
-            self_sender.send(Arc::clone(&self_arc));
-            let cb_sender = &self_arc.callback_channel.0;
-            let &callbacks = &self_arc.input_handler_callbacks;
-            cb_sender.send(callbacks);
-            let device = device.clone();
-            let hidapi = hidapi.clone();
+        fn start(mut self, device: Arc<HidDeviceInfo>, hidapi: Arc<HidApi>) -> Self{
+//            let (hidapi_sender, hidapi_receiver) = channel::<Arc<HidApi>>();
+//            let (device_sender, device_receiver) = channel::<Arc<HidDeviceInfo>>();
+//            hidapi_sender.send(hidapi);
+//            device_sender.send(device);
+            let cb_sender = &self.callback_channel.0;
+            let cb_receiver = &self.callback_channel.1;
+            let callbacks = &self.input_handler_callbacks;
+//            cb_sender.send(callbacks);
             self.join_handle = Some(thread::spawn(move ||{
-                let s = self_receiver.recv().unwrap();
-                let cb_receiver = s.callback_channel.1;
+                let hidapi = hidapi.clone();
+                let device = device.clone();
                 let handle = hidapi.open(device.vendor_id, device.product_id).unwrap();
                 let mut buf = [0u8];
-                let cb_vec = cb_receiver.recv().unwrap();
+//                let cb_vec = cb_receiver.recv().unwrap();
                 handle.read(&mut buf);
-                for cb in cb_vec{
+                for cb in callbacks{
                     cb(buf.to_vec())
                 }
             }));
+            self
         }
     }
 
-    impl<'j> Joycon<'j> {
-        pub fn new(device_info: HidDeviceInfo, manager: Arc<JoyconManager>) -> JoyconResult<Joycon<'j>>{
+    impl Joycon {
+        pub fn new(device_info: HidDeviceInfo, manager: Arc<JoyconManager>) -> JoyconResult<Joycon>{
             let device_arc = Arc::new(device_info);
             let input_handler_thread = InputHandlerThread::new(Arc::clone(&device_arc), Arc::clone(&manager));
             let joycon = Joycon{
                 device_handle: Arc::clone(&device_arc),
-                input_handler_thread
+                input_handler_thread: input_handler_thread.start()
             };
             return Ok(joycon)
         }
@@ -148,9 +148,9 @@ pub mod joycon{
 
     // ================= JoyconManager ==============================
 
-    pub struct JoyconManager<'j>{
+    pub struct JoyconManager{
         hidapi: Arc<HidApi>,
-        pub connected_joycons: Vec<Joycon<'j>>,
+        pub connected_joycons: Vec<Joycon>,
     }
 
     pub type JoyconResult<T> = Result<T, JoyconError>;
@@ -160,9 +160,9 @@ pub mod joycon{
         InitializationError(String)
     }
 
-    impl<'j> JoyconManager<'j>{
+    impl JoyconManager{
         //Much cleaner than before
-        pub fn new() -> JoyconResult<JoyconManager<'static>>{
+        pub fn new() -> JoyconResult<JoyconManager>{
             let hidapi = HidApi::new();
             match hidapi{
                 Ok(h) => {
