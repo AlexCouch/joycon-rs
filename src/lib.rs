@@ -121,7 +121,7 @@ pub mod joycon{
     impl Joycon {
         pub fn new(device_info: HidDeviceInfo, manager: Arc<JoyconManager>) -> JoyconResult<Joycon>{
             let device_arc = Arc::new(device_info);
-            let input_handler_thread = InputHandlerThread::new(Arc::clone(&device_arc), Arc::clone(manager));
+            let input_handler_thread = InputHandlerThread::new(Arc::clone(&device_arc), Arc::clone(&manager));
             let joycon = Joycon{
                 device_handle: Arc::clone(&device_arc),
                 input_handler_thread
@@ -172,6 +172,7 @@ pub mod joycon{
                 let vendor_id = d.vendor_id.clone();
                 let product_id = d.product_id.clone();
                 if vendor_id == JC_VENDOR_ID && (product_id == RIGHT_JC_PROD_ID || product_id == LEFT_JC_PROD_ID){
+                    let &d = d;
                     let joycon = Joycon::new(d, Arc::clone(&arc)).unwrap();
                     arc.connected_joycons.push(joycon)
                 }
